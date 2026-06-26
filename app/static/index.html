@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lúri · Agente de Agendamento Odontológico</title>
+<style>
+  :root {
+    --bg: #0f2e2b;
+    --panel: #fbf7ef;
+    --ink: #14302d;
+    --muted: #6b7f7b;
+    --accent: #d98a5b;
+    --teal: #1f5f57;
+    --teal-soft: #e3efec;
+    --line: #e4ddcf;
+    --bot: #ffffff;
+    --user: #1f5f57;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    background: radial-gradient(120% 120% at 0% 0%, #143c38 0%, var(--bg) 55%);
+    color: var(--ink); height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    padding: 18px 28px; color: var(--panel); display: flex; align-items: baseline; gap: 14px;
+  }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: .3px; }
+  header .sub { font-size: 13px; color: #9fc3bc; font-family: system-ui, sans-serif; }
+  header .badge {
+    margin-left: auto; font-family: system-ui, sans-serif; font-size: 12px;
+    background: rgba(255,255,255,.1); padding: 5px 11px; border-radius: 999px; color: #cfe6e1;
+  }
+  main {
+    flex: 1; display: grid; grid-template-columns: 1fr 360px; gap: 18px;
+    padding: 0 22px 22px; min-height: 0;
+  }
+  .card {
+    background: var(--panel); border-radius: 16px; display: flex; flex-direction: column;
+    min-height: 0; box-shadow: 0 16px 40px rgba(0,0,0,.28); overflow: hidden;
+  }
+  .card > .head {
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    font-family: system-ui, sans-serif; font-size: 13px; font-weight: 600; color: var(--teal);
+    text-transform: uppercase; letter-spacing: .6px; display: flex; align-items: center; gap: 8px;
+  }
+  #log { flex: 1; overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 78%; padding: 11px 15px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap; }
+  .msg.bot { background: var(--bot); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 4px; }
+  .msg.user { background: var(--user); color: #f3fbf8; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg.typing { color: var(--muted); font-style: italic; }
+  form { display: flex; gap: 10px; padding: 14px; border-top: 1px solid var(--line); }
+  input[type=text] {
+    flex: 1; border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px;
+    font-size: 15px; font-family: system-ui, sans-serif; background: #fff; color: var(--ink);
+  }
+  input[type=text]:focus { outline: 2px solid var(--teal-soft); border-color: var(--teal); }
+  button {
+    border: 0; border-radius: 11px; padding: 0 18px; font-size: 14px; font-weight: 600;
+    font-family: system-ui, sans-serif; background: var(--teal); color: #fff; cursor: pointer;
+  }
+  button:hover { background: #1a544c; }
+  button.ghost { background: transparent; color: var(--teal); border: 1px solid var(--line); }
+  #side .head { justify-content: space-between; }
+  #msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .note {
+    border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px;
+    padding: 10px 12px; background: #fff; font-family: system-ui, sans-serif; font-size: 13px;
+  }
+  .note.lembrete { border-left-color: var(--teal); }
+  .note.atendente { border-left-color: #b4474e; }
+  .note .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .4px; }
+  .note .tel { font-weight: 600; color: var(--ink); }
+  .subhead { font-family: system-ui, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .5px;
+             text-transform: uppercase; color: var(--muted); margin: 6px 2px 2px; }
+  .empty { color: var(--muted); font-family: system-ui, sans-serif; font-size: 13px; padding: 18px; text-align: center; }
+  .seedbtn { font-size: 11px; padding: 6px 10px; }
+  @media (max-width: 880px) { main { grid-template-columns: 1fr; } #side { display: none; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Lúri</h1>
+    <span class="sub">recepção virtual · Clínica Odontológica Sorriso</span>
+    <span class="badge" id="badge">…</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="head">💬 Conversa</div>
+      <div id="log"></div>
+      <form id="form">
+        <input id="input" type="text" autocomplete="off"
+               placeholder="Ex.: Quero marcar uma limpeza para sexta de manhã" />
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
+
+    <section class="card" id="side">
+      <div class="head">
+        <span>🔔 Painel da equipe</span>
+        <button class="ghost seedbtn" id="seed" title="Cria consultas de teste para os agentes de lembrete e no-show">popular demo</button>
+      </div>
+      <div id="msgs"><div class="empty">Lembretes (24h antes), follow-ups de falta e pedidos de atendente humano aparecem aqui.</div></div>
+    </section>
+  </main>
+
+<script>
+const SESSAO = (() => {
+  let s = localStorage.getItem("luri_sessao");
+  if (!s) { s = "s_" + Math.random().toString(36).slice(2); localStorage.setItem("luri_sessao", s); }
+  return s;
+})();
+
+const log = document.getElementById("log");
+const form = document.getElementById("form");
+const input = document.getElementById("input");
+
+function add(texto, quem, classe = "") {
+  const div = document.createElement("div");
+  div.className = `msg ${quem} ${classe}`.trim();
+  div.textContent = texto;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+add("Olá! Sou a Lúri, da Clínica Sorriso. Posso agendar, remarcar ou cancelar consultas e mostrar horários disponíveis. Como posso ajudar?", "bot");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const texto = input.value.trim();
+  if (!texto) return;
+  add(texto, "user");
+  input.value = "";
+  const typing = add("Lúri está digitando…", "bot", "typing");
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessao: SESSAO, mensagem: texto }),
+    });
+    const data = await r.json();
+    typing.remove();
+    add(data.resposta || "(sem resposta)", "bot");
+  } catch (err) {
+    typing.remove();
+    add("Ops, não consegui falar com o servidor. Tente novamente.", "bot");
+  }
+  carregarMensagens();
+});
+
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+async function carregarMensagens() {
+  try {
+    const [rm, ra] = await Promise.all([fetch("/api/mensagens"), fetch("/api/atendimentos")]);
+    const { mensagens } = await rm.json();
+    const { atendimentos } = await ra.json();
+    const box = document.getElementById("msgs");
+    if (!mensagens.length && !atendimentos.length) return;
+    box.innerHTML = "";
+
+    if (atendimentos.length) {
+      const h = document.createElement("div");
+      h.className = "subhead"; h.textContent = "👤 Atendentes solicitados";
+      box.appendChild(h);
+      for (const a of atendimentos) {
+        const div = document.createElement("div");
+        div.className = "note atendente";
+        div.innerHTML = `<div class="meta"><span>Protocolo #${a.id} · ${esc(a.status)}</span><span>${esc(a.criado_em)}</span></div>
+          <div class="tel">${esc(a.telefone)}</div><div>${esc(a.motivo)}</div>`;
+        box.appendChild(div);
+      }
+    }
+
+    if (mensagens.length) {
+      const h = document.createElement("div");
+      h.className = "subhead"; h.textContent = "📨 Mensagens automáticas";
+      box.appendChild(h);
+      for (const m of mensagens) {
+        const div = document.createElement("div");
+        div.className = "note " + (m.tipo === "lembrete" ? "lembrete" : "noshow");
+        div.innerHTML = `<div class="meta"><span>${m.tipo === "lembrete" ? "Lembrete 24h" : "Follow-up de falta"}</span><span>${esc(m.criado_em)}</span></div>
+          <div class="tel">${esc(m.telefone)}</div><div>${esc(m.texto)}</div>`;
+        box.appendChild(div);
+      }
+    }
+  } catch (_) {}
+}
+
+document.getElementById("seed").addEventListener("click", async () => {
+  await fetch("/api/demo/seed", { method: "POST" });
+  add("Consultas de demonstração criadas. Os agentes vão disparar o lembrete e o follow-up de falta no próximo ciclo (até ~1 min).", "bot");
+  setTimeout(carregarMensagens, 1500);
+});
+
+async function badge() {
+  try {
+    const r = await fetch("/api/health");
+    const h = await r.json();
+    document.getElementById("badge").textContent =
+      h.modo_ia === "claude" ? `IA: ${h.modelo}` : "modo demonstração (sem IA)";
+  } catch (_) {}
+}
+
+badge();
+carregarMensagens();
+setInterval(carregarMensagens, 5000);
+</script>
+</body>
+</html>

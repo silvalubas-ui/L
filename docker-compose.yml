@@ -1,0 +1,19 @@
+services:
+  luri:
+    build: .
+    image: luri:latest
+    container_name: luri
+    ports:
+      - "8000:8000"
+    environment:
+      # Deixe vazio para rodar no modo demonstração (sem IA).
+      # Defina para conversar com o agente real:  export ANTHROPIC_API_KEY=sk-ant-...
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-8}
+      LURI_TZ: ${LURI_TZ:-America/Sao_Paulo}
+    volumes:
+      - luri-data:/data
+    restart: unless-stopped
+
+volumes:
+  luri-data:
