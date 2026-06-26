@@ -27,7 +27,16 @@ FastAPI ── agent.py ──► Claude (tool use)  ──►  ferramentas de a
 ```
 
 - **Backend:** FastAPI + Uvicorn
-- **Cérebro:** Claude via SDK oficial da Anthropic, com *function calling* (loop de tool-use)
+- **Cérebro (provedor plugável):** o agente fala *function calling* com qualquer um destes —
+  selecionado por `LLM_PROVIDER`:
+  - **ollama** (local, grátis, para desenvolvimento) — protocolo compatível com OpenAI
+  - **gemini** (Google) — endpoint compatível com OpenAI
+  - **openai** (ou qualquer endpoint compatível)
+  - **anthropic** (Claude, via SDK oficial)
+  - sem provedor configurado → modo demonstração por palavras-chave
+  > Ollama, Gemini e OpenAI compartilham o **mesmo loop de tool-use** (protocolo OpenAI);
+  > trocar entre eles é só mudar `base_url`/modelo/chave. Trocar para Gemini depois é uma
+  > linha no `.env`.
 - **Agendador:** APScheduler — dois agentes rodando em ciclo (lembrete e no-show)
 - **Dados:** SQLite (volume Docker, sem serviço externo)
 - **Frontend:** uma página HTML, sem build
@@ -103,7 +112,11 @@ funcionando ao vivo.
 
 | Variável | Padrão | Descrição |
 |----------|--------|-----------|
-| `ANTHROPIC_API_KEY` | *(vazio)* | Chave da API. Vazio = modo demonstração |
+| `LLM_PROVIDER` | *(auto)* | `ollama` \| `gemini` \| `openai` \| `anthropic`. Vazio = anthropic se houver chave, senão ollama |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Endpoint do Ollama |
+| `OLLAMA_MODEL` | `qwen2.5:3b` | Modelo do Ollama (precisa `ollama pull`) |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | *(vazio)* / `gemini-2.5-flash` | Para usar o Gemini |
+| `ANTHROPIC_API_KEY` | *(vazio)* | Chave da API da Anthropic |
 | `ANTHROPIC_MODEL` | `claude-opus-4-8` | Modelo Claude |
 | `LURI_TZ` | `America/Sao_Paulo` | Fuso da clínica |
 | `LURI_REMINDER_LEAD_HOURS` | `24` | Antecedência do lembrete |

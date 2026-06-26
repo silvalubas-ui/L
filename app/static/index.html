@@ -200,7 +200,7 @@ async function badge() {
     const r = await fetch("/api/health");
     const h = await r.json();
     document.getElementById("badge").textContent =
-      h.modo_ia === "claude" ? `IA: ${h.modelo}` : "modo demonstração (sem IA)";
+      h.provedor === "fallback" ? "modo demonstração (sem IA)" : `IA: ${h.provedor} · ${h.modelo}`;
   } catch (_) {}
 }
 

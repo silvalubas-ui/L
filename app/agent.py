@@ -251,7 +251,83 @@ def _responder_fallback(sessao: str, mensagem: str) -> str:
             "completa.)")
 
 
+# --------------------------------------------------------------------------- #
+# Loop com provedores compatíveis com OpenAI (Ollama, Gemini, OpenAI)
+# --------------------------------------------------------------------------- #
+def _tools_openai() -> list:
+    return [
+        {"type": "function",
+         "function": {"name": t["name"], "description": t["description"],
+                      "parameters": t["input_schema"]}}
+        for t in TOOLS
+    ]
+
+
+def _responder_openai_compat(sessao: str, mensagem: str) -> str:
+    from openai import OpenAI
+
+    cfg = config.openai_compat_settings()
+    client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"] or "x", timeout=120)
+
+    historico = db.carregar_historico(sessao)  # sem a mensagem de system
+    historico.append({"role": "user", "content": mensagem})
+
+    resposta_final = ""
+    MAX_ITER = 4
+    try:
+        for i in range(MAX_ITER):
+            mensagens = [{"role": "system", "content": _system_prompt()}] + historico
+            # Na última iteração, tira as ferramentas para forçar uma resposta em texto.
+            # Modelos pequenos (ex.: qwen2.5:3b) tendem a chamar ferramenta em loop;
+            # sem ferramentas, o modelo é obrigado a concluir com o que já coletou.
+            usar_tools = i < MAX_ITER - 1
+            resp = client.chat.completions.create(
+                model=cfg["model"], messages=mensagens,
+                tools=_tools_openai() if usar_tools else None,
+                temperature=0, max_tokens=700,
+            )
+            msg = resp.choices[0].message
+
+            assistant = {"role": "assistant", "content": msg.content or ""}
+            if msg.tool_calls:
+                assistant["tool_calls"] = [
+                    {"id": tc.id, "type": "function",
+                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in msg.tool_calls
+                ]
+            historico.append(assistant)
+
+            if not msg.tool_calls:
+                resposta_final = msg.content or ""
+                break
+
+            for tc in msg.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                saida = _executar_ferramenta(tc.function.name, args, sessao)
+                historico.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "content": json.dumps(saida, ensure_ascii=False),
+                })
+    except Exception as exc:  # noqa: BLE001 — provedor indisponível não pode derrubar o app
+        prov = config.LLM_PROVIDER
+        if prov == "ollama":
+            return ("Não consegui falar com o Ollama em "
+                    f"{config.OLLAMA_BASE_URL}. Verifique se ele está rodando "
+                    f"('ollama serve') e se o modelo '{config.OLLAMA_MODEL}' foi baixado "
+                    f"('ollama pull {config.OLLAMA_MODEL}').\n\nDetalhe: {exc}")
+        return f"Falha ao falar com o provedor de IA ({prov}): {exc}"
+
+    db.salvar_historico(sessao, historico)
+    return resposta_final or "Desculpe, não consegui concluir agora. Pode tentar de novo?"
+
+
 def responder(sessao: str, mensagem: str) -> str:
-    if config.USE_REAL_LLM:
+    prov = config.LLM_PROVIDER
+    if prov == "anthropic" and config.ANTHROPIC_API_KEY:
         return _responder_claude(sessao, mensagem)
+    if prov in config._OPENAI_COMPAT:
+        return _responder_openai_compat(sessao, mensagem)
     return _responder_fallback(sessao, mensagem)

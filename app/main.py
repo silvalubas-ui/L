@@ -65,8 +65,9 @@ def seed():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "modo_ia": "claude" if config.USE_REAL_LLM else "fallback",
-            "modelo": config.ANTHROPIC_MODEL if config.USE_REAL_LLM else None}
+    return {"status": "ok",
+            "provedor": config.LLM_PROVIDER if config.USE_REAL_LLM else "fallback",
+            "modelo": config.modelo_ativo() if config.USE_REAL_LLM else None}
 
 
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")

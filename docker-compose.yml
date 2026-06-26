@@ -6,11 +6,18 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Deixe vazio para rodar no modo demonstração (sem IA).
-      # Defina para conversar com o agente real:  export ANTHROPIC_API_KEY=sk-ant-...
+      # Provedor de IA: ollama | gemini | openai | anthropic | (vazio = auto)
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      # Ollama roda no host; a partir do container, use host.docker.internal
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-8}
       LURI_TZ: ${LURI_TZ:-America/Sao_Paulo}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - luri-data:/data
     restart: unless-stopped
