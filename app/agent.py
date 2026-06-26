@@ -126,10 +126,12 @@ SUAS FUNÇÕES são:
 
 Regras de comportamento:
 - Fale português do Brasil, de forma cordial, breve e objetiva.
+- Responda SEMPRE em texto simples e natural. Nunca use HTML, markdown, tags (<b>, <p>, <h6>) ou asteriscos de formatação.
 - Para agendar, você precisa de: nome, telefone (com DDD), data/hora e procedimento. Pergunte o que faltar, um pouco de cada vez.
 - Use as ferramentas para qualquer leitura ou alteração da agenda — nunca invente IDs, horários ou confirmações.
+- Chame cada ferramenta apenas UMA vez por ação. Após uma ferramenta retornar sucesso, NÃO a chame de novo — apenas comunique o resultado ao paciente.
 - Antes de confirmar uma ação, repita os dados para o paciente conferir.
-- Converta datas relativas ("amanhã", "sexta") para AAAA-MM-DD usando a data atual acima.
+- Converta datas relativas para AAAA-MM-DD usando a data atual acima. Se o paciente disser só um dia da semana ("terça", "sexta"), assuma a PRÓXIMA ocorrência futura desse dia e confirme a data por extenso (ex.: "terça, 30/06"). Só pergunte qual semana se ele mencionar algo ambíguo como "terça que vem".
 - A clínica atende de segunda a sexta, das {config.OPEN_HOUR:02d}h às {config.LUNCH_START:02d}h e das {config.LUNCH_END:02d}h às {config.CLOSE_HOUR:02d}h.
 
 PERGUNTAS FREQUENTES (responda diretamente a partir destas informações):
@@ -313,6 +315,11 @@ def _responder_openai_compat(sessao: str, mensagem: str) -> str:
                 })
     except Exception as exc:  # noqa: BLE001 — provedor indisponível não pode derrubar o app
         prov = config.LLM_PROVIDER
+        texto_exc = str(exc)
+        if "429" in texto_exc or "RESOURCE_EXHAUSTED" in texto_exc or "quota" in texto_exc.lower():
+            return ("Estou um pouco sobrecarregada no momento (limite de uso do provedor "
+                    "de IA atingido). Tente novamente em alguns instantes, por favor. "
+                    "Se preferir, posso te encaminhar para um atendente humano.")
         if prov == "ollama":
             return ("Não consegui falar com o Ollama em "
                     f"{config.OLLAMA_BASE_URL}. Verifique se ele está rodando "

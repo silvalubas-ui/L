@@ -115,7 +115,7 @@ funcionando ao vivo.
 | `LLM_PROVIDER` | *(auto)* | `ollama` \| `gemini` \| `openai` \| `anthropic`. Vazio = anthropic se houver chave, senão ollama |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Endpoint do Ollama |
 | `OLLAMA_MODEL` | `qwen2.5:3b` | Modelo do Ollama (precisa `ollama pull`) |
-| `GEMINI_API_KEY` / `GEMINI_MODEL` | *(vazio)* / `gemini-2.5-flash` | Para usar o Gemini |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | *(vazio)* / `gemini-2.5-flash-lite` | Para usar o Gemini |
 | `ANTHROPIC_API_KEY` | *(vazio)* | Chave da API da Anthropic |
 | `ANTHROPIC_MODEL` | `claude-opus-4-8` | Modelo Claude |
 | `LURI_TZ` | `America/Sao_Paulo` | Fuso da clínica |

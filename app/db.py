@@ -168,10 +168,25 @@ def agendar(nome: str, telefone: str, data_hora: str, procedimento: str) -> dict
 
     with _connect() as conn:
         ja_ocupado = conn.execute(
-            "SELECT id FROM consultas WHERE data_hora = ? AND status IN ('agendada','remarcada')",
+            """SELECT id, telefone, procedimento FROM consultas
+               WHERE data_hora = ? AND status IN ('agendada','remarcada')""",
             (dt.isoformat(),),
         ).fetchone()
         if ja_ocupado:
+            # Idempotência: se o MESMO paciente repetir o mesmo horário (ex.: modelo
+            # chamou a ferramenta duas vezes), devolve sucesso com a consulta existente
+            # em vez de "horário ocupado".
+            if ja_ocupado["telefone"] == telefone.strip():
+                return {
+                    "ok": True,
+                    "ja_existia": True,
+                    "consulta": {
+                        "id": ja_ocupado["id"],
+                        "nome": nome.strip(),
+                        "data_hora": dt.strftime("%d/%m/%Y às %H:%M"),
+                        "procedimento": ja_ocupado["procedimento"],
+                    },
+                }
             return {"ok": False, "erro": "Esse horário acabou de ser ocupado. Escolha outro."}
 
         cur = conn.execute(
