@@ -2,11 +2,18 @@
 import os
 from zoneinfo import ZoneInfo
 
-# Banco SQLite — em container fica num volume montado em /data
+# Banco SQLite — fallback se Supabase não estiver configurado
 DB_PATH = os.getenv("LURI_DB_PATH", "/data/luri.db")
 
 # Fuso da clínica
 TZ = ZoneInfo(os.getenv("LURI_TZ", "America/Sao_Paulo"))
+
+# --------------------------------------------------------------------------- #
+# Supabase
+# --------------------------------------------------------------------------- #
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
 
 # --------------------------------------------------------------------------- #
 # Provedor de IA (plugável)

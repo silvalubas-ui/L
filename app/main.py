@@ -76,3 +76,7 @@ app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 @app.get("/")
 def index():
     return FileResponse(_STATIC / "index.html")
+
+@app.get("/dashboard")
+def dashboard():
+    return FileResponse(_STATIC / "dashboard.html")

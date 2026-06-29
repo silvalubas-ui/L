@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lúri — Painel da Clínica</title>
+<style>
+  /* ── Tokens ─────────────────────────────────────────────── */
+  :root {
+    --azul:      #1A6B8A;
+    --azul-soft: #E8F4F8;
+    --verde:     #2ECC8F;
+    --verde-soft:#E6F9F2;
+    --amarelo-soft: #FFF8E6;
+    --amarelo:   #F0A500;
+    --cinza-soft:#F0F0F0;
+    --cinza:     #9AA0A6;
+    --vermelho:  #E74C3C;
+    --vermelho-soft: #FDEDEB;
+    --fundo:     #F8F9FA;
+    --branco:    #FFFFFF;
+    --texto:     #1A1F2E;
+    --texto-leve:#6B7280;
+    --linha:     #E5E7EB;
+    --sombra:    0 1px 4px rgba(0,0,0,0.07);
+    --radius:    10px;
+  }
+
+  /* ── Reset ───────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: var(--fundo);
+    color: var(--texto);
+    min-height: 100vh;
+  }
+
+  /* ── Cabeçalho ───────────────────────────────────────────── */
+  header {
+    background: var(--branco);
+    border-bottom: 1px solid var(--linha);
+    padding: 0 24px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--azul);
+  }
+  .logo span { color: var(--texto-leve); font-weight: 400; font-size: 0.9rem; }
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 20px;
+    background: var(--cinza-soft);
+    color: var(--cinza);
+  }
+  .status-badge.online { background: var(--verde-soft); color: #1a8f63; }
+  .status-badge.offline { background: var(--vermelho-soft); color: var(--vermelho); }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* ── Layout principal ────────────────────────────────────── */
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+  }
+
+  /* ── Barra de data + navegação ───────────────────────────── */
+  .data-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .data-nav h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+  .data-nav h1 small {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: var(--texto-leve);
+    margin-top: 2px;
+  }
+  .nav-btns {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .nav-btns button {
+    background: var(--branco);
+    border: 1px solid var(--linha);
+    border-radius: var(--radius);
+    padding: 7px 14px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    color: var(--texto);
+    transition: background 0.15s;
+  }
+  .nav-btns button:hover { background: var(--azul-soft); }
+  .nav-btns button.hoje { background: var(--azul); color: #fff; border-color: var(--azul); }
+  .nav-btns button.hoje:hover { background: #155a75; }
+
+  /* ── Cards de resumo ─────────────────────────────────────── */
+  .resumo {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 600px) { .resumo { grid-template-columns: repeat(2, 1fr); } }
+  .card {
+    background: var(--branco);
+    border-radius: var(--radius);
+    box-shadow: var(--sombra);
+    padding: 18px 20px;
+  }
+  .card .numero {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--azul);
+  }
+  .card .label {
+    font-size: 0.78rem;
+    color: var(--texto-leve);
+    margin-top: 4px;
+  }
+  .card.verde .numero { color: #1a8f63; }
+  .card.vermelho .numero { color: var(--vermelho); }
+  .card.amarelo .numero { color: var(--amarelo); }
+
+  /* ── Seção genérica ──────────────────────────────────────── */
+  .secao {
+    background: var(--branco);
+    border-radius: var(--radius);
+    box-shadow: var(--sombra);
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .secao-header {
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--linha);
+    font-weight: 600;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* ── Linha do tempo de consultas ─────────────────────────── */
+  .timeline {
+    position: relative;
+    padding: 8px 0;
+  }
+  /* linha vertical */
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 54px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: var(--azul);
+    opacity: 0.15;
+  }
+  .consulta-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--linha);
+    position: relative;
+  }
+  .consulta-item:last-child { border-bottom: none; }
+  .hora {
+    width: 44px;
+    flex-shrink: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--azul);
+    padding-top: 2px;
+  }
+  /* marcador na linha */
+  .marcador {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--azul);
+    flex-shrink: 0;
+    margin: 4px 14px 0 0;
+    position: relative;
+    z-index: 1;
+  }
+  .info { flex: 1; min-width: 0; }
+  .info .nome-pac {
+    font-weight: 600;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .info .proc {
+    font-size: 0.82rem;
+    color: var(--texto-leve);
+    margin-top: 2px;
+  }
+  .info .extras {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+  /* linha "agora" */
+  .linha-agora {
+    position: relative;
+    height: 0;
+  }
+  .linha-agora::before {
+    content: '▶ agora';
+    position: absolute;
+    left: 22px;
+    top: -9px;
+    font-size: 0.7rem;
+    color: var(--vermelho);
+    font-weight: 600;
+  }
+  .linha-agora::after {
+    content: '';
+    position: absolute;
+    left: 64px; right: 22px;
+    top: 0;
+    height: 1px;
+    background: var(--vermelho);
+    opacity: 0.5;
+  }
+
+  /* ── Badges de status ────────────────────────────────────── */
+  .badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .badge.agendada   { background: var(--azul-soft);    color: var(--azul); }
+  .badge.remarcada  { background: var(--amarelo-soft);  color: #a07000; }
+  .badge.cancelada  { background: var(--cinza-soft);    color: #555; }
+  .badge.falta      { background: var(--vermelho-soft); color: var(--vermelho); }
+  .badge.lembrete   { background: var(--verde-soft);    color: #1a8f63; font-size: 0.7rem; }
+
+  /* ── Fila de atenção humana ──────────────────────────────── */
+  .atendimento-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--linha);
+  }
+  .atendimento-item:last-child { border-bottom: none; }
+  .atend-info .motivo { font-size: 0.9rem; font-weight: 500; }
+  .atend-info .meta   { font-size: 0.78rem; color: var(--texto-leve); margin-top: 3px; }
+  .btn-resolver {
+    background: var(--verde-soft);
+    color: #1a8f63;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .btn-resolver:hover { background: #c5f0df; }
+
+  /* ── Estado vazio ────────────────────────────────────────── */
+  .vazio {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--texto-leve);
+  }
+  .vazio .icone { font-size: 2rem; margin-bottom: 10px; }
+  .vazio p { font-size: 0.88rem; line-height: 1.6; }
+  .vazio code {
+    background: var(--cinza-soft);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+  }
+
+  /* ── Spinner ─────────────────────────────────────────────── */
+  .spinner {
+    display: flex;
+    justify-content: center;
+    padding: 32px;
+  }
+  .spinner::after {
+    content: '';
+    width: 28px; height: 28px;
+    border: 3px solid var(--linha);
+    border-top-color: var(--azul);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Offline banner ──────────────────────────────────────── */
+  .offline-banner {
+    background: var(--vermelho-soft);
+    color: var(--vermelho);
+    text-align: center;
+    padding: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="offline-banner" id="offlineBanner">
+  ⚠️ Agente offline — tentando reconectar...
+</div>
+
+<header>
+  <div class="logo">
+    🦷 Lúri <span id="nomeClinica">Carregando...</span>
+  </div>
+  <div class="status-badge" id="statusBadge">
+    <span class="dot"></span>
+    <span id="statusTexto">Verificando...</span>
+  </div>
+</header>
+
+<main>
+  <!-- Navegação de data -->
+  <div class="data-nav">
+    <h1 id="tituloData">
+      Carregando...
+      <small id="subtituloData"></small>
+    </h1>
+    <div class="nav-btns">
+      <button onclick="navegarDia(-1)">← Anterior</button>
+      <button class="hoje" onclick="irParaHoje()">Hoje</button>
+      <button onclick="navegarDia(1)">Próximo →</button>
+    </div>
+  </div>
+
+  <!-- Resumo -->
+  <div class="resumo">
+    <div class="card">
+      <div class="numero" id="totalConsultas">—</div>
+      <div class="label">Consultas hoje</div>
+    </div>
+    <div class="card verde">
+      <div class="numero" id="totalConfirmadas">—</div>
+      <div class="label">Confirmadas</div>
+    </div>
+    <div class="card amarelo">
+      <div class="numero" id="totalCanceladas">—</div>
+      <div class="label">Cancelamentos</div>
+    </div>
+    <div class="card vermelho">
+      <div class="numero" id="totalFaltas">—</div>
+      <div class="label">Faltas</div>
+    </div>
+  </div>
+
+  <!-- Agenda do dia -->
+  <div class="secao">
+    <div class="secao-header">📅 Agenda do dia</div>
+    <div id="listaConsultas"><div class="spinner"></div></div>
+  </div>
+
+  <!-- Fila de atenção -->
+  <div class="secao">
+    <div class="secao-header">🙋 Atenção necessária <span id="badgeAtend" style="margin-left:auto;background:var(--vermelho-soft);color:var(--vermelho);font-size:0.75rem;padding:2px 8px;border-radius:20px;display:none"></span></div>
+    <div id="listaAtendimentos"><div class="spinner"></div></div>
+  </div>
+</main>
+
+<script>
+// ── Configuração ───────────────────────────────────────────
+const API_BASE = 'http://localhost:8000';
+
+// ── Estado ────────────────────────────────────────────────
+let dataAtual = new Date();
+dataAtual.setHours(0, 0, 0, 0);
+
+// ── Utilitários de data ───────────────────────────────────
+const DIAS_PT = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+const MESES_PT = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+
+function formatarDataTitulo(d) {
+  return `${DIAS_PT[d.getDay()]}, ${d.getDate()} de ${MESES_PT[d.getMonth()]}`;
+}
+
+function formatarDataISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+function isHoje(d) {
+  const h = new Date();
+  return d.getFullYear() === h.getFullYear() && d.getMonth() === h.getMonth() && d.getDate() === h.getDate();
+}
+
+// ── Navegação ─────────────────────────────────────────────
+function navegarDia(delta) {
+  dataAtual = new Date(dataAtual.getTime() + delta * 86400000);
+  renderizar();
+}
+
+function irParaHoje() {
+  dataAtual = new Date();
+  dataAtual.setHours(0, 0, 0, 0);
+  renderizar();
+}
+
+// ── Health check ──────────────────────────────────────────
+async function verificarStatus() {
+  const badge = document.getElementById('statusBadge');
+  const texto = document.getElementById('statusTexto');
+  const banner = document.getElementById('offlineBanner');
+  try {
+    const r = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(4000) });
+    if (r.ok) {
+      badge.className = 'status-badge online';
+      texto.textContent = 'Agente ativo';
+      banner.style.display = 'none';
+      const data = await r.json();
+      if (data.clinic_name) document.getElementById('nomeClinica').textContent = '· ' + data.clinic_name;
+    } else { throw new Error(); }
+  } catch {
+    badge.className = 'status-badge offline';
+    texto.textContent = 'Offline';
+    banner.style.display = 'block';
+  }
+}
+
+// ── Consultas do dia ──────────────────────────────────────
+async function carregarConsultas() {
+  const el = document.getElementById('listaConsultas');
+  el.innerHTML = '<div class="spinner"></div>';
+
+  const dataStr = formatarDataISO(dataAtual);
+  let consultas = [];
+  try {
+    const r = await fetch(`${API_BASE}/api/consultas?data=${dataStr}`, { signal: AbortSignal.timeout(5000) });
+    if (r.ok) consultas = await r.json();
+  } catch { /* mantém vazio */ }
+
+  // Resumo
+  const ativos = consultas.filter(c => c.status === 'agendada' || c.status === 'remarcada');
+  const cancelados = consultas.filter(c => c.status === 'cancelada');
+  const faltas = consultas.filter(c => c.status === 'falta');
+  document.getElementById('totalConsultas').textContent = consultas.length;
+  document.getElementById('totalConfirmadas').textContent = ativos.length;
+  document.getElementById('totalCanceladas').textContent = cancelados.length;
+  document.getElementById('totalFaltas').textContent = faltas.length;
+
+  if (!consultas.length) {
+    el.innerHTML = `
+      <div class="vazio">
+        <div class="icone">📭</div>
+        <p>Nenhuma consulta para este dia.<br>
+        Use <code>POST /api/demo/seed</code> para popular dados de demonstração.</p>
+      </div>`;
+    return;
+  }
+
+  // Ordena por horário
+  consultas.sort((a, b) => (a.data_hora || '').localeCompare(b.data_hora || ''));
+
+  const agora = new Date();
+  let linhaAgoraInserida = false;
+
+  const html = ['<div class="timeline">'];
+  for (const c of consultas) {
+    const dtConsulta = c.data_hora ? new Date(c.data_hora) : null;
+    const hora = dtConsulta ? dtConsulta.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+    // Linha "agora" — inserida antes da primeira consulta futura
+    if (!linhaAgoraInserida && isHoje(dataAtual) && dtConsulta && dtConsulta > agora) {
+      html.push('<div class="linha-agora"></div>');
+      linhaAgoraInserida = true;
+    }
+
+    const lembreteTag = c.lembrete_enviado ? '<span class="badge lembrete">✉ lembrete</span>' : '';
+    html.push(`
+      <div class="consulta-item">
+        <span class="hora">${hora}</span>
+        <span class="marcador"></span>
+        <div class="info">
+          <div class="nome-pac">${esc(c.nome || '—')}</div>
+          <div class="proc">${esc(c.procedimento || '—')}</div>
+          <div class="extras">
+            <span class="badge ${c.status}">${traduzirStatus(c.status)}</span>
+            ${lembreteTag}
+          </div>
+        </div>
+      </div>`);
+  }
+  html.push('</div>');
+  el.innerHTML = html.join('');
+}
+
+// ── Fila de atendimentos ──────────────────────────────────
+async function carregarAtendimentos() {
+  const el = document.getElementById('listaAtendimentos');
+  const badge = document.getElementById('badgeAtend');
+  el.innerHTML = '<div class="spinner"></div>';
+
+  let atendimentos = [];
+  try {
+    const r = await fetch(`${API_BASE}/api/atendimentos`, { signal: AbortSignal.timeout(5000) });
+    if (r.ok) atendimentos = await r.json();
+  } catch { /* mantém vazio */ }
+
+  const pendentes = atendimentos.filter(a => a.status === 'pendente');
+
+  if (pendentes.length) {
+    badge.style.display = 'inline';
+    badge.textContent = pendentes.length + ' pendente' + (pendentes.length > 1 ? 's' : '');
+  } else {
+    badge.style.display = 'none';
+  }
+
+  if (!atendimentos.length) {
+    el.innerHTML = `<div class="vazio"><div class="icone">✅</div><p>Nenhum atendimento pendente.</p></div>`;
+    return;
+  }
+
+  el.innerHTML = atendimentos.map(a => `
+    <div class="atendimento-item" id="atend-${a.id}">
+      <div class="atend-info">
+        <div class="motivo">${esc(a.motivo)}</div>
+        <div class="meta">📞 ${esc(a.telefone || '—')} · ${esc(a.criado_em || '')} · <span class="badge ${a.status}">${traduzirStatus(a.status)}</span></div>
+      </div>
+      ${a.status === 'pendente' ? `<button class="btn-resolver" onclick="marcarResolvido(${a.id})">✓ Resolver</button>` : ''}
+    </div>`).join('');
+}
+
+// ── Marcar como resolvido (visual) ───────────────────────
+function marcarResolvido(id) {
+  const el = document.getElementById(`atend-${id}`);
+  if (!el) return;
+  el.querySelector('.btn-resolver')?.remove();
+  const badge = el.querySelector('.badge');
+  if (badge) { badge.className = 'badge cancelada'; badge.textContent = 'resolvido'; }
+}
+
+// ── Helpers ───────────────────────────────────────────────
+function esc(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function traduzirStatus(s) {
+  return { agendada: 'Agendada', remarcada: 'Remarcada', cancelada: 'Cancelada', falta: 'Falta', pendente: 'Pendente', resolvido: 'Resolvido' }[s] || s;
+}
+
+// ── Render principal ──────────────────────────────────────
+function renderizar() {
+  const titulo = document.getElementById('tituloData');
+  const subtitulo = document.getElementById('subtituloData');
+  titulo.childNodes[0].textContent = formatarDataTitulo(dataAtual);
+  subtitulo.textContent = isHoje(dataAtual) ? 'Hoje' : formatarDataISO(dataAtual);
+  carregarConsultas();
+}
+
+// ── Init ──────────────────────────────────────────────────
+verificarStatus();
+renderizar();
+carregarAtendimentos();
+
+// Atualiza a cada 60 segundos
+setInterval(() => {
+  verificarStatus();
+  renderizar();
+  carregarAtendimentos();
+}, 60000);
+</script>
+</body>
+</html>
