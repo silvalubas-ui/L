@@ -80,3 +80,20 @@ def index():
 @app.get("/dashboard")
 def dashboard():
     return FileResponse(_STATIC / "dashboard.html")
+@app.get("/api/agenda")
+def agenda_do_dia(data: str = None):
+    from datetime import date
+    if not data:
+        data = date.today().isoformat()
+    try:
+        inicio = f"{data}T00:00:00"
+        fim = f"{data}T23:59:59"
+        res = db._sb.table("consultas")\
+            .select("*")\
+            .gte("data_hora", inicio)\
+            .lte("data_hora", fim)\
+            .order("data_hora")\
+            .execute()
+        return {"data": data, "consultas": res.data}
+    except Exception as e:
+        return {"data": data, "consultas": [], "erro": str(e)}

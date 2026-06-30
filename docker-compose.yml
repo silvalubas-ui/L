@@ -6,9 +6,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Provedor de IA: ollama | gemini | openai | anthropic | (vazio = auto)
       LLM_PROVIDER: ${LLM_PROVIDER:-}
-      # Ollama roda no host; a partir do container, use host.docker.internal
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -20,6 +18,14 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - luri-data:/data
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    command: tunnel --url http://luri:8000
+    depends_on:
+      - luri
     restart: unless-stopped
 
 volumes:
