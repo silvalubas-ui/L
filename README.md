@@ -1,125 +1,38 @@
-# Lúri — Agente de Agendamento para Clínicas de Odontologia
+# Lúri — Agente de Agendamento Odontológico
 
-Recepcionista virtual que **agenda, remarca e cancela consultas**, envia **lembrete 24h antes**
-e faz **follow-up automático de no-show** (falta). Também **responde a perguntas frequentes**
-(convênios, endereço, pagamento, etc.) e **encaminha para um atendente humano** quando o paciente
-pede ou quando não consegue resolver. Tem **escopo fechado**: assuntos fora da clínica (clima,
-data, conhecimentos gerais) são educadamente redirecionados.
+Contexto do projeto para orientar qualquer sessão de desenvolvimento (Claude, Vitor, ou outra pessoa da equipe).
 
-Reimplementação em código (Python) de um fluxo originalmente montado no n8n — pensada para
-portfólio: roda 100% localmente via Docker e pode ser exposta com Cloudflare Tunnel.
+## Contexto técnico
 
-## Arquitetura
+| Camada | Tecnologia |
+|---|---|
+| Backend | Python / FastAPI |
+| Banco de dados | Supabase |
+| Containerização | Docker / Docker Compose |
+| Tunelamento | Cloudflare Tunnel (Zero Trust, conector Docker) |
+| Versionamento | GitHub — `silvalubas-ui/L` |
+| Repositório local | `C:\Users\Mr Robot\L` |
+| Credenciais de infraestrutura | Google Drive |
 
-```
-Navegador (chat HTML)
-        │  POST /api/chat
-        ▼
-FastAPI ── agent.py ──► Claude (tool use)  ──►  ferramentas de agenda
-   │                                              (agendar / remarcar /
-   │                                               cancelar / horários / buscar)
-   │                                                        │
-   ├─ scheduler.py (APScheduler)                            ▼
-   │     • agente de lembrete  (24h antes)            SQLite (/data/luri.db)
-   │     • agente de no-show   (falta)                       ▲
-   │            └─ "envia" mensagens ──────────────────────►─┘
-   └─ static/index.html (chat + painel de mensagens automáticas)
-```
+## Colaboração
 
-- **Backend:** FastAPI + Uvicorn
-- **Cérebro (provedor plugável):** o agente fala *function calling* com qualquer um destes —
-  selecionado por `LLM_PROVIDER`:
-  - **ollama** (local, grátis, para desenvolvimento) — protocolo compatível com OpenAI
-  - **gemini** (Google) — endpoint compatível com OpenAI
-  - **openai** (ou qualquer endpoint compatível)
-  - **anthropic** (Claude, via SDK oficial)
-  - sem provedor configurado → modo demonstração por palavras-chave
-  > Ollama, Gemini e OpenAI compartilham o **mesmo loop de tool-use** (protocolo OpenAI);
-  > trocar entre eles é só mudar `base_url`/modelo/chave. Trocar para Gemini depois é uma
-  > linha no `.env`.
-- **Agendador:** APScheduler — dois agentes rodando em ciclo (lembrete e no-show)
-- **Dados:** SQLite (volume Docker, sem serviço externo)
-- **Frontend:** uma página HTML, sem build
-- **FAQ:** base editável em [`app/faq.py`](app/faq.py) (injetada no prompt do Claude e usada no modo demo)
-- **Atendente humano:** ferramenta `encaminhar_para_atendente` registra um "ticket" para a equipe
+Trabalho com o **Vitor**, que administra um servidor de produção separado.
 
-> As mensagens de lembrete/no-show são gravadas numa tabela e exibidas no painel lateral,
-> simulando uma integração com WhatsApp/SMS. Trocar essa camada por um provedor real
-> (Twilio, Z-API, etc.) é só implementar `db.registrar_mensagem`.
+> Sempre que sugerir mudanças de infraestrutura, considerar se isso pode afetar o trabalho dele ou exigir alinhamento antes de aplicar.
 
-## Como rodar
+## Como responder (diretrizes de comunicação)
 
-### Com Docker (recomendado)
+- Sempre em **português brasileiro**.
+- Explicações diretas e não-técnicas. Quando um termo técnico for necessário, explicar em uma frase simples o que ele significa.
+- Preferir passo a passo claro em vez de só soltar comandos sem contexto.
+- Ao sugerir comandos Docker/Git/etc., indicar exatamente **onde rodar** (qual pasta, qual terminal) e **o que esperar** como resultado.
 
-```bash
-# modo demonstração (sem IA — funciona sem chave)
-docker compose up --build
+## Padrões do projeto
 
-# com o agente Claude real
-export ANTHROPIC_API_KEY=sk-ant-...
-docker compose up --build
-```
+- Comunicação entre containers usa `http://luri:8000`, **nunca** `localhost`.
+- Autenticação do Git é feita com o Personal Access Token embutido na URL do remote. ⚠️ *Risco de segurança conhecido — rotacionar e migrar para um método mais seguro é um passo pendente.*
+- Tunnels rápidos (`trycloudflare.com`) são temporários — não usar como solução definitiva; preferir tunnel nomeado/persistente.
 
-Acesse **http://localhost:8000**.
+---
 
-### Sem Docker (desenvolvimento)
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export LURI_DB_PATH=./luri.db          # evita escrever em /data
-export ANTHROPIC_API_KEY=sk-ant-...    # opcional
-uvicorn app.main:app --reload
-```
-
-## Demonstração rápida
-
-1. Abra a página e clique em **“popular demo”** (canto do painel lateral).
-   Isso cria duas consultas: uma daqui a ~24h e uma no passado sem comparecimento.
-2. Em até ~1 minuto, o **agente de lembrete** e o **agente de no-show** disparam e as
-   mensagens aparecem no painel à direita.
-3. No chat, experimente: *“horários disponíveis em 2026-06-29”*, *“quero marcar uma
-   avaliação”*, *“minhas consultas, telefone +5511990001111”*.
-4. Teste o escopo fechado: pergunte *“vai chover amanhã?”* — a Lúri redireciona.
-
-> No **modo demonstração** (sem `ANTHROPIC_API_KEY`) o chat usa um interpretador simples por
-> palavras-chave: entende pedidos de horário por data e consulta por telefone. Para a conversa
-> natural completa (entender “sexta de manhã”, conduzir o agendamento passo a passo), defina a
-> chave da API.
-
-## Endpoints
-
-| Método | Rota | Descrição |
-|-------|------|-----------|
-| `POST` | `/api/chat` | Conversa com o agente (`{sessao, mensagem}`) |
-| `GET`  | `/api/mensagens` | Mensagens automáticas enviadas (lembrete/no-show) |
-| `GET`  | `/api/atendimentos` | Pedidos de encaminhamento para atendente humano |
-| `GET`  | `/api/consultas?telefone=` | Consultas de um paciente |
-| `POST` | `/api/demo/seed` | Cria consultas de demonstração |
-| `GET`  | `/api/health` | Status e modo de IA |
-
-## Expor com Cloudflare Tunnel
-
-```bash
-docker compose up -d
-cloudflared tunnel --url http://localhost:8000
-```
-
-O Cloudflare devolve uma URL pública `https://...trycloudflare.com` para mostrar o agente
-funcionando ao vivo.
-
-## Configuração (variáveis de ambiente)
-
-| Variável | Padrão | Descrição |
-|----------|--------|-----------|
-| `LLM_PROVIDER` | *(auto)* | `ollama` \| `gemini` \| `openai` \| `anthropic`. Vazio = anthropic se houver chave, senão ollama |
-| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Endpoint do Ollama |
-| `OLLAMA_MODEL` | `qwen2.5:3b` | Modelo do Ollama (precisa `ollama pull`) |
-| `GEMINI_API_KEY` / `GEMINI_MODEL` | *(vazio)* / `gemini-2.5-flash-lite` | Para usar o Gemini |
-| `ANTHROPIC_API_KEY` | *(vazio)* | Chave da API da Anthropic |
-| `ANTHROPIC_MODEL` | `claude-opus-4-8` | Modelo Claude |
-| `LURI_TZ` | `America/Sao_Paulo` | Fuso da clínica |
-| `LURI_REMINDER_LEAD_HOURS` | `24` | Antecedência do lembrete |
-| `LURI_NOSHOW_GRACE_MINUTES` | `30` | Tolerância antes de marcar falta |
-| `LURI_SCHEDULER_INTERVAL_SECONDS` | `60` | Intervalo do ciclo dos agentes |
-| `LURI_OPEN_HOUR` / `LURI_CLOSE_HOUR` | `9` / `18` | Expediente |
+*Este documento substitui a necessidade de um processo formal separado (SSD) — mantê-lo atualizado é o suficiente para dar contexto rápido em qualquer nova sessão.*
