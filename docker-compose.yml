@@ -5,6 +5,8 @@ services:
     container_name: luri
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}

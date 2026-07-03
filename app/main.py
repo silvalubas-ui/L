@@ -86,14 +86,9 @@ def agenda_do_dia(data: str = None):
     if not data:
         data = date.today().isoformat()
     try:
-        inicio = f"{data}T00:00:00"
-        fim = f"{data}T23:59:59"
-        res = db._sb.table("consultas")\
-            .select("*")\
-            .gte("data_hora", inicio)\
-            .lte("data_hora", fim)\
-            .order("data_hora")\
-            .execute()
-        return {"data": data, "consultas": res.data}
+        todas = db.listar_atendimentos()
+        filtradas = [c for c in todas if data in str(c.get("data_hora", ""))]
+        return {"data": data, "consultas": filtradas}
     except Exception as e:
         return {"data": data, "consultas": [], "erro": str(e)}
+    
