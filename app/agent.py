@@ -13,6 +13,15 @@ from . import config, db, faq
 # --------------------------------------------------------------------------- #
 TOOLS = [
     {
+        "name": "consultar_clinica",
+        "description": "Busca a lista de procedimentos, preços, durações e profissionais da clínica. Use SEMPRE que o paciente perguntar por valores, preços, quais procedimentos existem, quem trabalha lá ou antes de fechar um agendamento.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
         "name": "listar_horarios_disponiveis",
         "description": "Lista os horários livres da clínica em uma data específica.",
         "input_schema": {
@@ -25,16 +34,17 @@ TOOLS = [
     },
     {
         "name": "agendar_consulta",
-        "description": "Agenda uma nova consulta. Confirme nome, telefone, data/hora e procedimento antes de chamar.",
+        "description": "Agenda uma nova consulta. Confirme nome, telefone, data/hora e exige os IDs numéricos obtidos em consultar_clinica.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "nome": {"type": "string", "description": "Nome do paciente."},
                 "telefone": {"type": "string", "description": "Telefone com DDD."},
                 "data_hora": {"type": "string", "description": "Data e hora 'AAAA-MM-DD HH:MM'."},
-                "procedimento": {"type": "string", "description": "Ex.: limpeza, avaliação, canal."},
+                "profissional_id": {"type": "integer", "description": "ID numérico do profissional escolhido."},
+                "procedimento_id": {"type": "integer", "description": "ID numérico do procedimento escolhido."},
             },
-            "required": ["nome", "telefone", "data_hora", "procedimento"],
+            "required": ["nome", "telefone", "data_hora", "profissional_id", "procedimento_id"],
         },
     },
     {
@@ -73,19 +83,12 @@ TOOLS = [
     },
     {
         "name": "encaminhar_para_atendente",
-        "description": (
-            "Encaminha a conversa para um atendente humano. Use quando o paciente "
-            "pedir explicitamente para falar com uma pessoa, OU quando você não "
-            "conseguir resolver a solicitação (dúvida fora da FAQ, reclamação, "
-            "caso de urgência, ou pedido que as ferramentas não cobrem)."
-        ),
+        "description": "Encaminha a conversa para um atendente humano.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "motivo": {"type": "string",
-                           "description": "Resumo do que o paciente precisa, para a equipe."},
-                "telefone": {"type": "string",
-                             "description": "Telefone do paciente para retorno, se informado."},
+                "motivo": {"type": "string", "description": "Resumo do que o paciente precisa, para a equipe."},
+                "telefone": {"type": "string", "description": "Telefone do paciente para retorno, se informado."},
             },
             "required": ["motivo"],
         },
@@ -93,14 +96,16 @@ TOOLS = [
 ]
 
 _DISPATCH = {
-    "listar_horarios_disponiveis": lambda a, s: db.horarios_disponiveis(a["data"]),
-    "agendar_consulta": lambda a, s: db.agendar(a["nome"], a["telefone"], a["data_hora"], a["procedimento"]),
-    "remarcar_consulta": lambda a, s: db.remarcar(int(a["consulta_id"]), a["nova_data_hora"]),
-    "cancelar_consulta": lambda a, s: db.cancelar(int(a["consulta_id"])),
+    "consultar_clinica": lambda a, s: {
+        "profissionais_disponiveis": db.listar_profissionais(),
+        "procedimentos_disponiveis": db.listar_procedimentos()
+    },
+    "listar_horarios_disponiveis": lambda a, s: db.horarios_disponiveis(a["data"]) if hasattr(db, 'horarios_disponiveis') else {"erro": "Função em desenvolvimento."},
+    "agendar_consulta": lambda a, s: db.agendar_estruturado(a["nome"], a["telefone"], a["profissional_id"], a["procedimento_id"], a["data_hora"]),
+    "remarcar_consulta": lambda a, s: db.remarcar(int(a["consulta_id"]), a["nova_data_hora"]) if hasattr(db, 'remarcar') else {"erro": "Função em desenvolvimento."},
+    "cancelar_consulta": lambda a, s: db.cancelar(int(a["consulta_id"])) if hasattr(db, 'cancelar') else {"erro": "Função em desenvolvimento."},
     "buscar_consultas": lambda a, s: db.buscar_por_telefone(a["telefone"]),
-    "encaminhar_para_atendente": lambda a, s: db.encaminhar_atendente(
-        a.get("motivo", ""), a.get("telefone", ""), s
-    ),
+    "encaminhar_para_atendente": lambda a, s: db.encaminhar_atendente(a.get("motivo", ""), a.get("telefone", ""), s) if hasattr(db, 'encaminhar_atendente') else {"erro": "Função em development."},
 }
 
 
@@ -109,7 +114,7 @@ def _executar_ferramenta(nome: str, args: dict, sessao: str) -> dict:
         return _DISPATCH[nome](args, sessao)
     except KeyError:
         return {"erro": f"Ferramenta desconhecida: {nome}"}
-    except Exception as exc:  # noqa: BLE001 — devolve o erro ao modelo, não derruba o app
+    except Exception as exc:  # noqa: BLE001
         return {"erro": f"Falha ao executar {nome}: {exc}"}
 
 
@@ -120,34 +125,26 @@ def _system_prompt() -> str:
 Data e hora atuais: {agora.strftime('%A, %d/%m/%Y %H:%M')} (fuso da clínica).
 
 SUAS FUNÇÕES são:
-1. Cuidar da agenda de consultas: agendar, remarcar, cancelar e informar horários disponíveis, além de consultar as consultas de um paciente.
-2. Responder PERGUNTAS FREQUENTES sobre a clínica (abaixo).
-3. Encaminhar para um atendente humano quando necessário.
+1. Cuidar da agenda de consultas: agendar, remarcar, cancelar e informar horários disponíveis.
+2. Responder sobre valores, preços, tratamentos e profissionais da clínica usando dados REAIS do banco.
+3. Responder PERGUNTAS FREQUENTES sobre a clínica (abaixo).
+4. Encaminhar para um atendente humano quando necessário.
 
-Regras de comportamento:
+Regras de comportamento fundamentais:
 - Fale português do Brasil, de forma cordial, breve e objetiva.
-- Responda SEMPRE em texto simples e natural. Nunca use HTML, markdown, tags (<b>, <p>, <h6>) ou asteriscos de formatação.
-- Para agendar, você precisa de: nome, telefone (com DDD), data/hora e procedimento. Pergunte o que faltar, um pouco de cada vez.
+- Responda SEMPRE em texto simples e natural. Nunca use HTML, markdown, tags ou asteriscos de formatação.
+- SE O PACIENTE PERGUNTAR POR PREÇOS, VALORES, TRATAMENTOS OU PROFISSIONAIS: Você NÃO sabe essas informações de cabeça. Acione IMEDIATAMENTE a ferramenta 'consultar_clinica' para obter a lista real do banco de dados e responder com precisão.
+- ANTES de confirmar e salvar um agendamento, você também DEVE acionar a ferramenta 'consultar_clinica' para descobrir os IDs corretos.
+- Para agendar, você precisa de: nome, telefone (com DDD), data/hora, profissional_id e procedimento_id. Pergunte o que faltar, um pouco de cada vez.
 - Use as ferramentas para qualquer leitura ou alteração da agenda — nunca invente IDs, horários ou confirmações.
-- Chame cada ferramenta apenas UMA vez por ação. Após uma ferramenta retornar sucesso, NÃO a chame de novo — apenas comunique o resultado ao paciente.
-- Antes de confirmar uma ação, repita os dados para o paciente conferir.
-- Converta datas relativas para AAAA-MM-DD usando a data atual acima. Se o paciente disser só um dia da semana ("terça", "sexta"), assuma a PRÓXIMA ocorrência futura desse dia e confirme a data por extenso (ex.: "terça, 30/06"). Só pergunte qual semana se ele mencionar algo ambíguo como "terça que vem".
-- A clínica atende de segunda a sexta, das {config.OPEN_HOUR:02d}h às {config.LUNCH_START:02d}h e das {config.LUNCH_END:02d}h às {config.CLOSE_HOUR:02d}h.
 
-PERGUNTAS FREQUENTES (responda diretamente a partir destas informações):
+PERGUNTAS FREQUENTES:
 {faq.render_para_prompt()}
 
-ENCAMINHAR PARA ATENDENTE HUMANO — use a ferramenta encaminhar_para_atendente quando:
-- o paciente pedir explicitamente para falar com uma pessoa/atendente;
-- for uma reclamação, ou um caso de urgência/dor que precise de organização imediata;
-- você não souber responder (dúvida que não está na FAQ) ou a solicitação fugir das suas ferramentas.
-Antes de encaminhar, peça o telefone para retorno (se ainda não tiver) e um resumo do que a pessoa precisa. Ao encaminhar, avise que um atendente entrará em contato em breve e informe o número de protocolo retornado.
-
-FORA DO ESCOPO: se perguntarem sobre clima, notícias, que dia é hoje, conhecimentos gerais ou qualquer assunto que não seja a clínica, responda gentilmente que você só pode ajudar com a agenda e dúvidas da clínica. Não responda à pergunta fora do escopo."""
-
-
+ENCAMINHAR PARA ATENDENTE HUMANO — use a ferramenta encaminhar_para_atendente quando a solicitação fugir das suas ferramentas."""
 # --------------------------------------------------------------------------- #
 # Loop com o Claude (modo real)
+
 # --------------------------------------------------------------------------- #
 def _responder_claude(sessao: str, mensagem: str) -> str:
     import anthropic
@@ -155,6 +152,7 @@ def _responder_claude(sessao: str, mensagem: str) -> str:
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
     historico = db.carregar_historico(sessao)
+    tamanho_original = len(historico)  # <-- Guardamos o tamanho original aqui!
     historico.append({"role": "user", "content": mensagem})
 
     resposta_final = ""
@@ -183,9 +181,9 @@ def _responder_claude(sessao: str, mensagem: str) -> str:
                 })
         historico.append({"role": "user", "content": resultados})
 
-    db.salvar_historico(sessao, historico)
+    # <-- Salvamos apenas o que foi gerado nesta execução (fatiando a lista)
+    db.salvar_historico(sessao, historico[tamanho_original:])
     return resposta_final or "Desculpe, não consegui concluir agora. Pode tentar de novo?"
-
 
 # --------------------------------------------------------------------------- #
 # Fallback determinístico (sem ANTHROPIC_API_KEY) — mantém a demo funcionando
@@ -268,15 +266,16 @@ def _tools_openai() -> list:
 def _responder_openai_compat(sessao: str, mensagem: str) -> str:
     from openai import OpenAI
 
-    cfg = config.openai_compat_settings()
-    client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"] or "x", timeout=120)
+cfg = config.openai_compat_settings()
+client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"] or "x", timeout=120)
 
-    historico = db.carregar_historico(sessao)  # sem a mensagem de system
-    historico.append({"role": "user", "content": mensagem})
+historico = db.carregar_historico(sessao)  # sem a mensagem de system
+tamanho_original = len(historico)
+historico.append({"role": "user", "content": mensagem})
 
-    resposta_final = ""
-    MAX_ITER = 4
-    try:
+resposta_final = ""
+MAX_ITER = 4
+try:
         for i in range(MAX_ITER):
             mensagens = [{"role": "system", "content": _system_prompt()}] + historico
             # Na última iteração, tira as ferramentas para forçar uma resposta em texto.
@@ -327,9 +326,8 @@ def _responder_openai_compat(sessao: str, mensagem: str) -> str:
                     f"('ollama pull {config.OLLAMA_MODEL}').\n\nDetalhe: {exc}")
         return f"Falha ao falar com o provedor de IA ({prov}): {exc}"
 
-    db.salvar_historico(sessao, historico)
+    db.salvar_historico(sessao, historico[tamanho_original:])
     return resposta_final or "Desculpe, não consegui concluir agora. Pode tentar de novo?"
-
 
 def responder(sessao: str, mensagem: str) -> str:
     prov = config.LLM_PROVIDER

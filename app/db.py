@@ -1,484 +1,274 @@
-"""Camada de persistência — Supabase (primário) ou SQLite (fallback).
-
-Se SUPABASE_URL e SUPABASE_SERVICE_KEY estiverem no .env, usa Supabase.
-Caso contrário, cai no SQLite original — nenhuma outra parte do código muda.
 """
-import json
-import os
+Módulo de Banco de Dados (db.py) - Versão Estruturada
+==================================================
+Gerencia a conexão SQLite, tabelas relacionais de profissionais,
+procedimentos, horários de funcionamento e agendamentos estruturados.
+"""
+
 import sqlite3
+import os
+import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from pathlib import Path
 
-from . import config
+logger = logging.getLogger(__name__)
 
-_STATUS_ATIVOS = ("agendada", "remarcada")
+# Define o caminho do banco de dados na pasta do projeto
+DB_PATH = Path(os.environ.get("LURI_DB_PATH", Path(__file__).parent / "luri.db"))   
 
-
-# --------------------------------------------------------------------------- #
-# Inicialização do cliente Supabase (só se configurado)
-# --------------------------------------------------------------------------- #
-if config.USE_SUPABASE:
-    from supabase import create_client, Client as SupabaseClient
-    _sb: SupabaseClient = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
-else:
-    _sb = None  # type: ignore
-
-
-# --------------------------------------------------------------------------- #
-# Helpers SQLite (fallback)
-# --------------------------------------------------------------------------- #
-def _connect() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(config.DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(config.DB_PATH)
+def obter_conexao():
+    """Retorna uma conexão ativa com o banco de dados SQLite com suporte a chaves estrangeiras."""
+    os.makedirs(DB_PATH.parent, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
-
-
-def _agora() -> datetime:
-    return datetime.now(config.TZ)
-
-
-# --------------------------------------------------------------------------- #
-# init_db — cria tabelas SQLite se necessário; no Supabase já existem
-# --------------------------------------------------------------------------- #
-def init_db() -> None:
-    if config.USE_SUPABASE:
-        # Tabelas já foram criadas no painel do Supabase — só verifica conexão
-        try:
-            _sb.table("consultas").select("id").limit(1).execute()
-        except Exception as e:
-            raise RuntimeError(f"Falha ao conectar ao Supabase: {e}") from e
-        return
-
-    with _connect() as conn:
-        conn.executescript(
-            """
+def init_db():
+    """Cria a estrutura relacional completa da clínica se não existir."""
+    logger.info("Inicializando o banco de dados relacional...")
+    with obter_conexao() as conn:
+        cursor = conn.cursor()
+        
+        # 1. Informações e Horários de Funcionamento da Clínica
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS config_clinica (
+                chave TEXT PRIMARY KEY,
+                valor TEXT NOT NULL
+            )
+        """)
+        
+        # 2. Cadastro de Profissionais
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS profissionais (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                especialidade TEXT NOT NULL,
+                ativo INTEGER DEFAULT 1
+            )
+        """)
+        
+        # 3. Cadastro de Procedimentos (com duração e preço tabelados)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS procedimentos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL UNIQUE,
+                duracao_minutos INTEGER NOT NULL DEFAULT 30,
+                preco REAL
+            )
+        """)
+        
+        # 4. Histórico de Mensagens do Chat
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS mensagens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sessao TEXT NOT NULL,
+                origem TEXT NOT NULL, -- 'usuario' ou 'agente'
+                texto TEXT NOT NULL,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        
+        # 5. Atendimentos Ativos (Estado atual do fluxo)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS atendimentos (
+                sessao TEXT PRIMARY KEY,
+                nome TEXT,
+                telefone TEXT,
+                status TEXT DEFAULT 'aberto', -- 'aberto', 'concluido', 'arquivado'
+                ultima_interacao TEXT NOT NULL
+            )
+        """)
+        
+        # 6. Consultas (Totalmente estruturada com Chaves Estrangeiras)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS consultas (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                nome            TEXT NOT NULL,
-                telefone        TEXT NOT NULL,
-                data_hora       TEXT NOT NULL,
-                procedimento    TEXT NOT NULL,
-                status          TEXT NOT NULL DEFAULT 'agendada',
-                lembrete_enviado INTEGER NOT NULL DEFAULT 0,
-                followup_enviado INTEGER NOT NULL DEFAULT 0,
-                criado_em       TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS mensagens_enviadas (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                telefone    TEXT NOT NULL,
-                tipo        TEXT NOT NULL,
-                texto       TEXT NOT NULL,
-                consulta_id INTEGER,
-                criado_em   TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS conversas (
-                sessao    TEXT PRIMARY KEY,
-                historico TEXT NOT NULL,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome_paciente TEXT NOT NULL,
+                telefone_paciente TEXT NOT NULL,
+                profissional_id INTEGER NOT NULL,
+                procedimento_id INTEGER NOT NULL,
+                data_hora TEXT NOT NULL,
                 criado_em TEXT NOT NULL,
-                atualizado_em TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS atendimentos_humanos (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                sessao    TEXT,
-                telefone  TEXT,
-                motivo    TEXT NOT NULL,
-                status    TEXT NOT NULL DEFAULT 'pendente',
-                criado_em TEXT NOT NULL
-            );
-            """
-        )
+                FOREIGN KEY (profissional_id) REFERENCES profissionais(id),
+                FOREIGN KEY (procedimento_id) REFERENCES procedimentos(id)
+            )
+        """)
+        conn.commit()
 
+# --- Funções de Consulta e Listagem ---
 
-# --------------------------------------------------------------------------- #
-# Slots de horário (lógica pura — igual nos dois modos)
-# --------------------------------------------------------------------------- #
-def _slots_do_dia(dia: datetime) -> list[datetime]:
-    if dia.weekday() >= 5:
-        return []
-    slots: list[datetime] = []
-    for hora in range(config.OPEN_HOUR, config.CLOSE_HOUR):
-        if config.LUNCH_START <= hora < config.LUNCH_END:
-            continue
-        slots.append(dia.replace(hour=hora, minute=0, second=0, microsecond=0))
-    return slots
+def listar_profissionais():
+    """Retorna todos os profissionais ativos cadastrados."""
+    with obter_conexao() as conn:
+        rows = conn.execute("SELECT * FROM profissionais WHERE ativo = 1").fetchall()
+        return [dict(r) for r in rows]
 
+def listar_procedimentos():
+    """Retorna todos os procedimentos e tabelas de preço disponíveis."""
+    with obter_conexao() as conn:
+        rows = conn.execute("SELECT * FROM procedimentos").fetchall()
+        return [dict(r) for r in rows]
 
-def _parse_data_hora(valor: str) -> Optional[datetime]:
-    valor = valor.strip().replace("T", " ")
-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(valor, fmt).replace(tzinfo=config.TZ)
-        except ValueError:
-            continue
-    try:
-        dt = datetime.fromisoformat(valor)
-        return dt if dt.tzinfo else dt.replace(tzinfo=config.TZ)
-    except ValueError:
-        return None
+def obter_horario_funcionamento():
+    """Retorna as configurações de horário e dados cadastrais da clínica em um dicionário."""
+    with obter_conexao() as conn:
+        rows = conn.execute("SELECT * FROM config_clinica").fetchall()
+        return {r["chave"]: r["valor"] for r in rows}
 
-
-def _slot_valido(dt: datetime) -> Optional[str]:
-    if dt <= _agora():
-        return "Esse horário já passou. Escolha uma data futura."
-    if dt.weekday() >= 5:
-        return "A clínica não atende aos fins de semana."
-    if dt.minute != 0:
-        return "As consultas começam sempre na hora cheia (ex.: 09:00, 14:00)."
-    hora = dt.hour
-    aberto = config.OPEN_HOUR <= hora < config.CLOSE_HOUR
-    almoco = config.LUNCH_START <= hora < config.LUNCH_END
-    if not aberto or almoco:
-        return (
-            f"Fora do horário de atendimento "
-            f"({config.OPEN_HOUR:02d}h–{config.LUNCH_START:02d}h e "
-            f"{config.LUNCH_END:02d}h–{config.CLOSE_HOUR:02d}h, dias úteis)."
-        )
-    return None
-
-
-# --------------------------------------------------------------------------- #
-# Horários disponíveis
-# --------------------------------------------------------------------------- #
-def horarios_disponiveis(data_iso: str) -> dict:
-    try:
-        dia = datetime.fromisoformat(data_iso).replace(tzinfo=config.TZ)
-    except ValueError:
-        return {"erro": "Data inválida. Use o formato AAAA-MM-DD."}
-
-    todos = _slots_do_dia(dia)
-    if not todos:
-        return {"data": data_iso, "disponiveis": [], "mensagem": "A clínica não atende nesse dia (fim de semana)."}
-
-    ocupados = _horarios_ocupados(dia)
-    agora = _agora()
-    livres = [s.strftime("%H:%M") for s in todos if s.isoformat() not in ocupados and s > agora]
-    return {"data": data_iso, "disponiveis": livres}
-
-
-def _horarios_ocupados(dia: datetime) -> set[str]:
-    inicio = dia.replace(hour=0, minute=0, second=0, microsecond=0)
-    fim = inicio + timedelta(days=1)
-
-    if config.USE_SUPABASE:
-        res = (
-            _sb.table("consultas")
-            .select("data_hora")
-            .in_("status", list(_STATUS_ATIVOS))
-            .gte("data_hora", inicio.isoformat())
-            .lt("data_hora", fim.isoformat())
-            .execute()
-        )
-        return {r["data_hora"] for r in res.data}
-
-    with _connect() as conn:
-        rows = conn.execute(
-            """SELECT data_hora FROM consultas
-               WHERE status IN ('agendada','remarcada')
-                 AND data_hora >= ? AND data_hora < ?""",
-            (inicio.isoformat(), fim.isoformat()),
-        ).fetchall()
-    return {r["data_hora"] for r in rows}
-
-
-# --------------------------------------------------------------------------- #
-# CRUD de consultas
-# --------------------------------------------------------------------------- #
-def agendar(nome: str, telefone: str, data_hora: str, procedimento: str) -> dict:
-    dt = _parse_data_hora(data_hora)
-    if dt is None:
-        return {"ok": False, "erro": "Não entendi a data/hora. Use 'AAAA-MM-DD HH:MM'."}
-    if (erro := _slot_valido(dt)) is not None:
-        return {"ok": False, "erro": erro}
-
-    if config.USE_SUPABASE:
-        # Verificar idempotência
-        existing = (
-            _sb.table("consultas")
-            .select("id, telefone, procedimento")
-            .eq("data_hora", dt.isoformat())
-            .in_("status", list(_STATUS_ATIVOS))
-            .execute()
-        )
-        if existing.data:
-            ja = existing.data[0]
-            if ja["telefone"] == telefone.strip():
-                return {"ok": True, "ja_existia": True, "consulta": {"id": ja["id"], "nome": nome.strip(), "data_hora": dt.strftime("%d/%m/%Y às %H:%M"), "procedimento": ja["procedimento"]}}
-            return {"ok": False, "erro": "Esse horário acabou de ser ocupado. Escolha outro."}
-
-        res = _sb.table("consultas").insert({
-            "nome": nome.strip(),
-            "telefone": telefone.strip(),
-            "data_hora": dt.isoformat(),
-            "procedimento": procedimento.strip(),
-            "status": "agendada",
-            "criado_em": _agora().isoformat(),
-        }).execute()
-        cid = res.data[0]["id"]
-        return {"ok": True, "consulta": {"id": cid, "nome": nome.strip(), "data_hora": dt.strftime("%d/%m/%Y às %H:%M"), "procedimento": procedimento.strip()}}
-
-    # SQLite
-    with _connect() as conn:
-        ja_ocupado = conn.execute(
-            "SELECT id, telefone, procedimento FROM consultas WHERE data_hora = ? AND status IN ('agendada','remarcada')",
-            (dt.isoformat(),),
-        ).fetchone()
-        if ja_ocupado:
-            if ja_ocupado["telefone"] == telefone.strip():
-                return {"ok": True, "ja_existia": True, "consulta": {"id": ja_ocupado["id"], "nome": nome.strip(), "data_hora": dt.strftime("%d/%m/%Y às %H:%M"), "procedimento": ja_ocupado["procedimento"]}}
-            return {"ok": False, "erro": "Esse horário acabou de ser ocupado. Escolha outro."}
-        cur = conn.execute(
-            "INSERT INTO consultas (nome, telefone, data_hora, procedimento, status, criado_em) VALUES (?, ?, ?, ?, 'agendada', ?)",
-            (nome.strip(), telefone.strip(), dt.isoformat(), procedimento.strip(), _agora().isoformat()),
-        )
-        cid = cur.lastrowid
-    return {"ok": True, "consulta": {"id": cid, "nome": nome.strip(), "data_hora": dt.strftime("%d/%m/%Y às %H:%M"), "procedimento": procedimento.strip()}}
-
-
-def remarcar(consulta_id: int, nova_data_hora: str) -> dict:
-    dt = _parse_data_hora(nova_data_hora)
-    if dt is None:
-        return {"ok": False, "erro": "Não entendi a nova data/hora."}
-    if (erro := _slot_valido(dt)) is not None:
-        return {"ok": False, "erro": erro}
-
-    if config.USE_SUPABASE:
-        consulta = _sb.table("consultas").select("*").eq("id", consulta_id).execute()
-        if not consulta.data:
-            return {"ok": False, "erro": f"Consulta #{consulta_id} não encontrada."}
-        if consulta.data[0]["status"] not in _STATUS_ATIVOS:
-            return {"ok": False, "erro": "Essa consulta não está ativa."}
-        ocupado = _sb.table("consultas").select("id").eq("data_hora", dt.isoformat()).in_("status", list(_STATUS_ATIVOS)).neq("id", consulta_id).execute()
-        if ocupado.data:
-            return {"ok": False, "erro": "O novo horário já está ocupado."}
-        _sb.table("consultas").update({"data_hora": dt.isoformat(), "status": "remarcada", "lembrete_enviado": False, "followup_enviado": False}).eq("id", consulta_id).execute()
-        return {"ok": True, "consulta": {"id": consulta_id, "data_hora": dt.strftime("%d/%m/%Y às %H:%M")}}
-
-    with _connect() as conn:
-        consulta = conn.execute("SELECT * FROM consultas WHERE id = ?", (consulta_id,)).fetchone()
-        if consulta is None:
-            return {"ok": False, "erro": f"Consulta #{consulta_id} não encontrada."}
-        if consulta["status"] not in _STATUS_ATIVOS:
-            return {"ok": False, "erro": "Essa consulta não está ativa (já cancelada ou concluída)."}
-        ocupado = conn.execute("SELECT id FROM consultas WHERE data_hora = ? AND status IN ('agendada','remarcada') AND id != ?", (dt.isoformat(), consulta_id)).fetchone()
-        if ocupado:
-            return {"ok": False, "erro": "O novo horário já está ocupado."}
-        conn.execute("UPDATE consultas SET data_hora = ?, status = 'remarcada', lembrete_enviado = 0, followup_enviado = 0 WHERE id = ?", (dt.isoformat(), consulta_id))
-    return {"ok": True, "consulta": {"id": consulta_id, "data_hora": dt.strftime("%d/%m/%Y às %H:%M")}}
-
-
-def cancelar(consulta_id: int) -> dict:
-    if config.USE_SUPABASE:
-        consulta = _sb.table("consultas").select("*").eq("id", consulta_id).execute()
-        if not consulta.data:
-            return {"ok": False, "erro": f"Consulta #{consulta_id} não encontrada."}
-        if consulta.data[0]["status"] not in _STATUS_ATIVOS:
-            return {"ok": False, "erro": "Essa consulta já não está ativa."}
-        _sb.table("consultas").update({"status": "cancelada"}).eq("id", consulta_id).execute()
-        return {"ok": True, "consulta_id": consulta_id}
-
-    with _connect() as conn:
-        consulta = conn.execute("SELECT * FROM consultas WHERE id = ?", (consulta_id,)).fetchone()
-        if consulta is None:
-            return {"ok": False, "erro": f"Consulta #{consulta_id} não encontrada."}
-        if consulta["status"] not in _STATUS_ATIVOS:
-            return {"ok": False, "erro": "Essa consulta já não está ativa."}
-        conn.execute("UPDATE consultas SET status = 'cancelada' WHERE id = ?", (consulta_id,))
-    return {"ok": True, "consulta_id": consulta_id}
-
-
-def buscar_por_telefone(telefone: str) -> dict:
-    if config.USE_SUPABASE:
-        res = _sb.table("consultas").select("id, nome, data_hora, procedimento, status").eq("telefone", telefone.strip()).order("data_hora").execute()
-        consultas = [{"id": r["id"], "nome": r["nome"], "data_hora": datetime.fromisoformat(r["data_hora"]).strftime("%d/%m/%Y às %H:%M"), "procedimento": r["procedimento"], "status": r["status"]} for r in res.data]
-        return {"telefone": telefone.strip(), "consultas": consultas}
-
-    with _connect() as conn:
-        rows = conn.execute("SELECT id, nome, data_hora, procedimento, status FROM consultas WHERE telefone = ? ORDER BY data_hora", (telefone.strip(),)).fetchall()
-    consultas = [{"id": r["id"], "nome": r["nome"], "data_hora": datetime.fromisoformat(r["data_hora"]).strftime("%d/%m/%Y às %H:%M"), "procedimento": r["procedimento"], "status": r["status"]} for r in rows]
-    return {"telefone": telefone.strip(), "consultas": consultas}
-
-
-# --------------------------------------------------------------------------- #
-# Mensagens enviadas
-# --------------------------------------------------------------------------- #
-def registrar_mensagem(telefone: str, tipo: str, texto: str, consulta_id: int) -> None:
-    if config.USE_SUPABASE:
-        _sb.table("mensagens_enviadas").insert({"telefone": telefone, "tipo": tipo, "texto": texto, "consulta_id": consulta_id, "criado_em": _agora().isoformat()}).execute()
-        return
-    with _connect() as conn:
-        conn.execute("INSERT INTO mensagens_enviadas (telefone, tipo, texto, consulta_id, criado_em) VALUES (?, ?, ?, ?, ?)", (telefone, tipo, texto, consulta_id, _agora().isoformat()))
-
-
-def listar_mensagens(limite: int = 50) -> list[dict]:
-    if config.USE_SUPABASE:
-        res = _sb.table("mensagens_enviadas").select("*").order("id", desc=True).limit(limite).execute()
-        return [{"id": r["id"], "telefone": r["telefone"], "tipo": r["tipo"], "texto": r["texto"], "criado_em": datetime.fromisoformat(r["criado_em"]).strftime("%d/%m %H:%M")} for r in res.data]
-
-    with _connect() as conn:
-        rows = conn.execute("SELECT * FROM mensagens_enviadas ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
-    return [{"id": r["id"], "telefone": r["telefone"], "tipo": r["tipo"], "texto": r["texto"], "criado_em": datetime.fromisoformat(r["criado_em"]).strftime("%d/%m %H:%M")} for r in rows]
-
-
-# --------------------------------------------------------------------------- #
-# Lembretes e follow-ups (usados pelo scheduler)
-# --------------------------------------------------------------------------- #
-def consultas_para_lembrete() -> list:
-    agora = _agora()
-    limite = agora + timedelta(hours=config.REMINDER_LEAD_HOURS)
-
-    if config.USE_SUPABASE:
-        res = (
-            _sb.table("consultas")
-            .select("*")
-            .in_("status", list(_STATUS_ATIVOS))
-            .eq("lembrete_enviado", False)
-            .gt("data_hora", agora.isoformat())
-            .lte("data_hora", limite.isoformat())
-            .execute()
-        )
-        return res.data
-
-    with _connect() as conn:
-        return conn.execute(
-            "SELECT * FROM consultas WHERE status IN ('agendada','remarcada') AND lembrete_enviado = 0 AND data_hora > ? AND data_hora <= ?",
-            (agora.isoformat(), limite.isoformat()),
-        ).fetchall()
-
-
-def consultas_para_followup() -> list:
-    corte = _agora() - timedelta(minutes=config.NOSHOW_GRACE_MINUTES)
-
-    if config.USE_SUPABASE:
-        res = (
-            _sb.table("consultas")
-            .select("*")
-            .in_("status", list(_STATUS_ATIVOS))
-            .eq("followup_enviado", False)
-            .lt("data_hora", corte.isoformat())
-            .execute()
-        )
-        return res.data
-
-    with _connect() as conn:
-        return conn.execute(
-            "SELECT * FROM consultas WHERE status IN ('agendada','remarcada') AND followup_enviado = 0 AND data_hora < ?",
-            (corte.isoformat(),),
-        ).fetchall()
-
-
-def marcar_lembrete_enviado(consulta_id: int) -> None:
-    if config.USE_SUPABASE:
-        _sb.table("consultas").update({"lembrete_enviado": True}).eq("id", consulta_id).execute()
-        return
-    with _connect() as conn:
-        conn.execute("UPDATE consultas SET lembrete_enviado = 1 WHERE id = ?", (consulta_id,))
-
-
-def marcar_falta_e_followup(consulta_id: int) -> None:
-    if config.USE_SUPABASE:
-        _sb.table("consultas").update({"status": "falta", "followup_enviado": True}).eq("id", consulta_id).execute()
-        return
-    with _connect() as conn:
-        conn.execute("UPDATE consultas SET status = 'falta', followup_enviado = 1 WHERE id = ?", (consulta_id,))
-
-
-# --------------------------------------------------------------------------- #
-# Encaminhamento para atendente humano
-# --------------------------------------------------------------------------- #
-def encaminhar_atendente(motivo: str, telefone: str = "", sessao: str = "") -> dict:
-    if config.USE_SUPABASE:
-        res = _sb.table("atendimentos_humanos").insert({
-            "sessao": sessao or None,
-            "telefone": (telefone or "").strip() or None,
-            "motivo": motivo.strip(),
-            "status": "pendente",
-            "criado_em": _agora().isoformat(),
-        }).execute()
-        return {"ok": True, "protocolo": res.data[0]["id"]}
-
-    with _connect() as conn:
-        cur = conn.execute(
-            "INSERT INTO atendimentos_humanos (sessao, telefone, motivo, status, criado_em) VALUES (?, ?, ?, 'pendente', ?)",
-            (sessao or None, (telefone or "").strip() or None, motivo.strip(), _agora().isoformat()),
-        )
-    return {"ok": True, "protocolo": cur.lastrowid}
-
-
-def listar_atendimentos(limite: int = 50) -> list[dict]:
-    if config.USE_SUPABASE:
-        res = _sb.table("atendimentos_humanos").select("*").order("id", desc=True).limit(limite).execute()
-        return [{"id": r["id"], "telefone": r["telefone"] or "—", "motivo": r["motivo"], "status": r["status"], "criado_em": datetime.fromisoformat(r["criado_em"]).strftime("%d/%m %H:%M")} for r in res.data]
-
-    with _connect() as conn:
-        rows = conn.execute("SELECT * FROM atendimentos_humanos ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
-    return [{"id": r["id"], "telefone": r["telefone"] or "—", "motivo": r["motivo"], "status": r["status"], "criado_em": datetime.fromisoformat(r["criado_em"]).strftime("%d/%m %H:%M")} for r in rows]
-
-
-# --------------------------------------------------------------------------- #
-# Histórico de conversa
-# --------------------------------------------------------------------------- #
+def listar_mensagens(sessao: str = None):
+    """Lista o histórico de mensagens, opcionalmente filtrado por sessão."""
+    query = "SELECT origem, texto, timestamp FROM mensagens"
+    args = ()
+    if sessao:
+        query += " WHERE sessao = ? ORDER BY id ASC"
+        args = (sessao,)
+    else:
+        query += " ORDER BY id ASC"
+        
+    with obter_conexao() as conn:
+        rows = conn.execute(query, args).fetchall()
+        return [dict(r) for r in rows]
+    
 def carregar_historico(sessao: str) -> list:
-    if config.USE_SUPABASE:
-        res = _sb.table("conversas").select("historico").eq("sessao", sessao).execute()
-        if res.data:
-            h = res.data[0]["historico"]
-            return h if isinstance(h, list) else json.loads(h)
-        return []
-
-    with _connect() as conn:
-        row = conn.execute("SELECT historico FROM conversas WHERE sessao = ?", (sessao,)).fetchone()
-    return json.loads(row["historico"]) if row else []
-
-
-def salvar_historico(sessao: str, historico: list) -> None:
-    agora = _agora().isoformat()
-
-    if config.USE_SUPABASE:
-        existing = _sb.table("conversas").select("sessao").eq("sessao", sessao).execute()
-        if existing.data:
-            _sb.table("conversas").update({"historico": historico, "atualizado_em": agora}).eq("sessao", sessao).execute()
-        else:
-            _sb.table("conversas").insert({"sessao": sessao, "historico": historico, "criado_em": agora, "atualizado_em": agora}).execute()
-        return
-
-    with _connect() as conn:
-        conn.execute(
-            "INSERT INTO conversas (sessao, historico, criado_em, atualizado_em) VALUES (?, ?, ?, ?) ON CONFLICT(sessao) DO UPDATE SET historico = excluded.historico, atualizado_em = excluded.atualizado_em",
-            (sessao, json.dumps(historico, ensure_ascii=False), agora, agora),
-        )
-
-
-# --------------------------------------------------------------------------- #
-# Seed de demonstração
-# --------------------------------------------------------------------------- #
-def seed_demo() -> dict:
-    agora = _agora()
-    lembrete_dt = (agora + timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
-    noshow_dt = (agora - timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
-
-    criadas = []
-    dados = [
-        ("Ana Paula", "+5511990001111", lembrete_dt, "Limpeza"),
-        ("Carlos Mendes", "+5511990002222", noshow_dt, "Avaliação"),
+    """Retorna o histórico de mensagens de uma sessão no formato esperado pela API da OpenAI."""
+    mensagens = listar_mensagens(sessao)
+    mapa_origem = {"usuario": "user", "agente": "assistant"}
+    return [
+        {"role": mapa_origem.get(m["origem"], "user"), "content": m["texto"]}
+        for m in mensagens
     ]
 
-    if config.USE_SUPABASE:
-        for nome, tel, dt, proc in dados:
-            res = _sb.table("consultas").insert({
-                "nome": nome, "telefone": tel,
-                "data_hora": dt.isoformat(), "procedimento": proc,
-                "status": "agendada", "criado_em": agora.isoformat(),
-            }).execute()
-            criadas.append({"id": res.data[0]["id"], "nome": nome, "data_hora": dt.strftime("%d/%m %H:%M"), "procedimento": proc})
-        return {"ok": True, "criadas": criadas}
+def listar_atendimentos():
+    """Retorna a lista de todas as sessões ativas e status de atendimento na clínica."""
+    with obter_conexao() as conn:
+        rows = conn.execute("SELECT * FROM atendimentos ORDER BY ultima_interacao DESC").fetchall()
+        return [dict(r) for r in rows]
 
-    with _connect() as conn:
-        for nome, tel, dt, proc in dados:
-            cur = conn.execute(
-                "INSERT INTO consultas (nome, telefone, data_hora, procedimento, status, criado_em) VALUES (?, ?, ?, ?, 'agendada', ?)",
-                (nome, tel, dt.isoformat(), proc, agora.isoformat()),
-            )
-            criadas.append({"id": cur.lastrowid, "nome": nome, "data_hora": dt.strftime("%d/%m %H:%M"), "procedimento": proc})
-    return {"ok": True, "criadas": criadas}
+def buscar_por_telefone(telefone: str):
+    """Busca consultas trazendo os dados reais do profissional e do procedimento via JOIN."""
+    query = """
+        SELECT c.id, c.nome_paciente, c.telefone_paciente, c.data_hora, 
+               p.nome AS profissional, p.especialidade,
+               pr.nome AS procedimento, pr.duracao_minutos, pr.preco
+        FROM consultas c
+        JOIN profissionais p ON c.profissional_id = p.id
+        JOIN procedimentos pr ON c.procedimento_id = pr.id
+        WHERE c.telefone_paciente = ?
+        ORDER BY c.data_hora ASC
+    """
+    with obter_conexao() as conn:
+        rows = conn.execute(query, (telefone,)).fetchall()
+        return [dict(r) for r in rows]
+
+# --- Funções de Escrita e Mutação ---
+
+def salvar_mensagem(sessao: str, origem: str, texto: str):
+    """Registra uma mensagem no histórico de chat e atualiza o atendimento ativo."""
+    agora = datetime.now().isoformat()
+    with obter_conexao() as conn:
+        conn.execute(
+            "INSERT INTO mensagens (sessao, origem, texto, timestamp) VALUES (?, ?, ?, ?)",
+            (sessao, origem, texto, agora)
+        )
+        conn.execute("""
+            INSERT INTO atendimentos (sessao, ultima_interacao) 
+            VALUES (?, ?)
+            ON CONFLICT(sessao) DO UPDATE SET ultima_interacao = excluded.ultima_interacao
+        """, (sessao, agora))
+        conn.commit()
+
+def agendar_estruturado(nome_paciente: str, telefone_paciente: str, profissional_id: int, procedimento_id: int, data_hora: str):
+    """Realiza o agendamento amarrado estritamente aos IDs relacionais do banco."""
+    agora = datetime.now().isoformat()
+    with obter_conexao() as conn:
+        conn.execute("""
+            INSERT INTO consultas (nome_paciente, telefone_paciente, profesional_id, procedimento_id, data_hora, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (nome_paciente, telefone_paciente, profissional_id, procedimento_id, data_hora, agora))
+        
+        conn.execute("""
+            UPDATE atendimentos SET nome = ?, telefone = ?, status = 'concluido' WHERE sessao = ?
+        """, (nome_paciente, telefone_paciente, telefone_paciente))
+        conn.commit()
+    logger.info(f"Consulta estruturada agendada com sucesso para {nome_paciente}.")
+    return {"status": "sucesso", "mensagem": "Agendamento estruturado realizado com sucesso."}
+
+def seed_demo():
+    """Limpa o banco completo e popula com os dados corporativos e as simulações fictícias."""
+    logger.info("Executando seed de demonstração com tabelas estruturadas...")
+    agora = datetime.now()
+    
+    # Define data dinâmica para o agendamento de teste bater sempre no futuro próximo
+    amanha_mesmo_horario = (agora + timedelta(days=1)).replace(minute=0, second=0, microsecond=0).isoformat()
+    
+    with obter_conexao() as conn:
+        conn.execute("DROP TABLE IF EXISTS consultas")
+        conn.execute("DROP TABLE IF EXISTS atendimentos")
+        conn.execute("DROP TABLE IF EXISTS mensagens")
+        conn.execute("DROP TABLE IF EXISTS procedimentos")
+        conn.execute("DROP TABLE IF EXISTS profissionais")
+        conn.execute("DROP TABLE IF EXISTS config_clinica")
+        conn.commit()
+    
+    # Recria as tabelas estruturadas limpas
+    init_db()
+    
+    with obter_conexao() as conn:
+        # 1. Inserindo dados cadastrais e regras da clínica
+        configuracoes = [
+            ("nome_clinica", "Clínica Sorriso Pleno"),
+            ("horario_abertura", "08:00"),
+            ("horario_fechamento", "18:00"),
+            ("inicio_almoco", "12:00"),
+            ("fim_almoco", "13:30")
+        ]
+        conn.executemany("INSERT INTO config_clinica (chave, valor) VALUES (?, ?)", configuracoes)
+        
+        # 2. Inserindo Corpo Clínico Profissional
+        profissionais = [
+            ("Dr. Henrique Prado", "Ortodontia"),
+            ("Dra. Renata Silva", "Clínica Geral e Limpeza")
+        ]
+        conn.executemany("INSERT INTO profissionais (nome, especialidade) VALUES (?, ?)", profissionais)
+        
+        # 3. Inserindo Catálogo de Procedimentos
+        procedimentos = [
+            ("Limpeza", 45, 150.00),
+            ("Avaliação", 30, 80.00),
+            ("Clareamento", 60, 400.00)
+        ]
+        conn.executemany("INSERT INTO procedimentos (nome, duracao_minutos, preco) VALUES (?, ?, ?)", procedimentos)
+
+        # 4. Inserindo Registro Fictício de Paciente Antiga (Para o teste de remarcação)
+        # Ana Paula cadastrada com uma Limpeza (Procedimento ID: 1) com a Dra. Renata (Profissional ID: 2)
+        conn.execute(
+            "INSERT INTO atendimentos (sessao, nome, telefone, status, ultima_interacao) VALUES (?, ?, ?, ?, ?)",
+            ("+5511990001111", "Ana Paula", "+5511990001111", "concluido", agora.isoformat())
+        )
+        conn.execute("""
+            INSERT INTO consultas (nome_paciente, telefone_paciente, profissional_id, procedimento_id, data_hora, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, ("Ana Paula", "+5511990001111", 2, 1, amanha_mesmo_horario, agora.isoformat()))
+        
+        conn.commit()
+        
+    return {
+        "status": "seed_completo", 
+        "mensagem": "Banco de dados relacional populado com sucesso (Clínica Sorriso Pleno configurada)."
+    }
+
+    def salvar_historico(sessao: str, historico: list):
+    """Persiste as mensagens novas (texto puro) de uma sessão de conversa.
+
+    Importante: espera receber só as mensagens NOVAS desde o último carregamento
+    (não o histórico inteiro), para não duplicar o que já está salvo.
+    """
+    mapa_origem = {"user": "usuario", "assistant": "agente"}
+    for msg in historico:
+        role = msg.get("role")
+        if role not in mapa_origem:
+            continue  # ignora mensagens de sistema e de ferramentas ("tool")
+        conteudo = msg.get("content")
+        if not isinstance(conteudo, str) or not conteudo.strip():
+            continue  # ignora blocos de chamada de ferramenta (não são texto puro)
+        salvar_mensagem(sessao, mapa_origem[role], conteudo)

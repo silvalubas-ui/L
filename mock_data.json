@@ -1,0 +1,35 @@
+{
+  "observacao": "Dados fictícios para testar o Lúri. O backend agora é relacional, então os nomes aqui devem bater com as intenções que a IA vai extrair e cruzar com o banco.",
+
+  "clinica": {
+    "nome": "Clínica Sorriso Pleno"
+  },
+
+  "pacientes_ja_criados_pelo_seed": [
+    {
+      "nome": "Ana Paula",
+      "telefone": "+5511990001111",
+      "procedimento_existente": "Limpeza",
+      "situacao": "Consulta agendada para o futuro"
+    }
+  ],
+
+  "conversa_teste_paciente_novo": {
+    "descricao": "Simula um paciente NOVO marcando uma consulta de avaliação",
+    "telefone_simulado": "+5511999998888",
+    "mensagens": [
+      "Oi, boa tarde! Queria marcar uma consulta de avaliação",
+      "Meu nome é Rafael Souza, meu telefone é +5511999998888",
+      "Prefiro amanhã à tarde, no horário que tiver livre"
+    ]
+  },
+
+  "conversa_teste_paciente_existente": {
+    "descricao": "Simula a Ana Paula (já existe no banco) conversando com o Lúri",
+    "telefone_simulado": "+5511990001111",
+    "mensagens": [
+      "Oi, aqui é a Ana Paula, eu queria saber quais procedimentos vocês fazem aí",
+      "Qual o valor do clareamento?"
+    ]
+  }
+}
